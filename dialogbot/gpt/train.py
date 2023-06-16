@@ -5,10 +5,12 @@
 
 Modified on: https://github.com/yangjianxin1/GPT2-chitchat
 """
+
 import argparse
 import os
+import torch_optimizer as optim
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import pickle
 import sys
 from datetime import datetime
@@ -24,7 +26,8 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import BertTokenizerFast, GPT2LMHeadModel, GPT2Config
 import random
 
-sys.path.append('../..')
+
+sys.path.append("../..")
 from dialogbot.gpt.earlystop import EarlyStopping
 
 
@@ -39,7 +42,7 @@ class MyDataset(Dataset):
 
     def __getitem__(self, index):
         input_ids = self.input_list[index]
-        input_ids = input_ids[:self.max_len]
+        input_ids = input_ids[: self.max_len]
         input_ids = torch.tensor(input_ids, dtype=torch.long)
         return input_ids
 
@@ -65,7 +68,7 @@ def load_dataset(args):
     random.shuffle(input_list)
     # 划分训练集与验证集
     val_num = int(len(input_list) * args.val_rate)
-    logger.info(f'data size: {len(input_list)}, val_num: {val_num}')
+    logger.info(f"data size: {len(input_list)}, val_num: {val_num}")
     input_list_train = input_list[val_num:]
     input_list_val = input_list[:val_num]
     train_dataset = MyDataset(input_list_train, args.max_len)
@@ -102,7 +105,9 @@ def train_epoch(model, train_dataloader, optimizer, scheduler, epoch, args):
             loss = loss.mean()
 
             # 统计该batch的预测token的正确数与总数
-            batch_correct_num, batch_total_num = calculate_acc(logits, labels, ignore_index=ignore_index)
+            batch_correct_num, batch_total_num = calculate_acc(
+                logits, labels, ignore_index=ignore_index
+            )
             # 统计该epoch的预测token的正确数与总数
             epoch_correct_num += batch_correct_num
             epoch_total_num += batch_total_num
@@ -138,7 +143,7 @@ def train_epoch(model, train_dataloader, optimizer, scheduler, epoch, args):
         except RuntimeError as exception:
             if "out of memory" in str(exception):
                 logger.warning("WARNING: ran out of memory")
-                if hasattr(torch.cuda, 'empty_cache'):
+                if hasattr(torch.cuda, "empty_cache"):
                     torch.cuda.empty_cache()
             else:
                 logger.error(str(exception))
@@ -148,18 +153,21 @@ def train_epoch(model, train_dataloader, optimizer, scheduler, epoch, args):
     epoch_mean_loss = total_loss / len(train_dataloader)
     epoch_mean_acc = epoch_correct_num / epoch_total_num
     logger.info(
-        "epoch {}: loss {}, predict_acc {}".format(epoch + 1, epoch_mean_loss, epoch_mean_acc))
+        "epoch {}: loss {}, predict_acc {}".format(
+            epoch + 1, epoch_mean_loss, epoch_mean_acc
+        )
+    )
 
     # save model
-    logger.info('saving model for epoch {}'.format(epoch + 1))
-    model_path = join(args.save_model_path, 'epoch{}'.format(epoch + 1))
+    logger.info("saving model for epoch {}".format(epoch + 1))
+    model_path = join(args.save_model_path, "epoch{}".format(epoch + 1))
     if not os.path.exists(model_path):
         os.mkdir(model_path)
-    model_to_save = model.module if hasattr(model, 'module') else model
+    model_to_save = model.module if hasattr(model, "module") else model
     model_to_save.save_pretrained(model_path)
-    logger.info('epoch {} finished'.format(epoch + 1))
+    logger.info("epoch {} finished".format(epoch + 1))
     epoch_finish_time = datetime.now()
-    logger.info('time for one epoch: {}'.format(epoch_finish_time - epoch_start_time))
+    logger.info("time for one epoch: {}".format(epoch_finish_time - epoch_start_time))
 
     return epoch_mean_loss
 
@@ -186,15 +194,18 @@ def validate_epoch(model, validate_dataloader, epoch, args):
                 del input_ids, outputs
             # 记录当前epoch的平均loss
             epoch_mean_loss = total_loss / len(validate_dataloader)
-            logger.info(
-                "validate epoch {}: loss {}".format(epoch + 1, epoch_mean_loss))
+            logger.info("validate epoch {}: loss {}".format(epoch + 1, epoch_mean_loss))
             epoch_finish_time = datetime.now()
-            logger.info('time for validating one epoch: {}'.format(epoch_finish_time - epoch_start_time))
+            logger.info(
+                "time for validating one epoch: {}".format(
+                    epoch_finish_time - epoch_start_time
+                )
+            )
             return epoch_mean_loss
     except RuntimeError as exception:
         if "out of memory" in str(exception):
             logger.warning("WARNING: ran out of memory")
-            if hasattr(torch.cuda, 'empty_cache'):
+            if hasattr(torch.cuda, "empty_cache"):
                 torch.cuda.empty_cache()
         else:
             logger.error(str(exception))
@@ -202,42 +213,63 @@ def validate_epoch(model, validate_dataloader, epoch, args):
 
 
 def train(tokenizer, model, train_dataset, validate_dataset, args):
-    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers,
-                                  collate_fn=collate_fn, drop_last=True)
-    validate_dataloader = DataLoader(validate_dataset, batch_size=args.batch_size, shuffle=True,
-                                     num_workers=args.num_workers, collate_fn=collate_fn, drop_last=True)
-    early_stopping = EarlyStopping(args.patience, verbose=True, save_path=args.save_model_path)
+    train_dataloader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        collate_fn=collate_fn,
+        drop_last=True,
+    )
+    validate_dataloader = DataLoader(
+        validate_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        collate_fn=collate_fn,
+        drop_last=True,
+    )
+    early_stopping = EarlyStopping(
+        args.patience, verbose=True, save_path=args.save_model_path
+    )
     t_total = len(train_dataloader) // args.gradient_accumulation_steps * args.epochs
-    optimizer = transformers.AdamW(model.parameters(), lr=args.lr, eps=args.eps)
+    optimizer = optim.RAdam(model.parameters(), lr=args.lr, eps=args.eps)
+
+    # 使用 CosineAnnealingLR 调整学习率
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=t_total)
+
     num_warmup_steps = int(t_total * args.warmup_steps_rate)
-    scheduler = transformers.get_linear_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps,
-                                                             num_training_steps=t_total)
-    logger.info('starting training')
+
+    logger.info("starting training")
     # 用于记录每个epoch训练和验证的loss
     train_losses, validate_losses = [], []
     # 记录验证集的最小loss
     best_val_loss = 10000
     # 开始训练
-    train_iterator = trange(int(args.epochs), desc='Epoch', mininterval=0)
+    train_iterator = trange(int(args.epochs), desc="Epoch", mininterval=0)
     for epoch in train_iterator:
         # ========== train ========== #
         train_loss = train_epoch(
-            model=model, train_dataloader=train_dataloader,
-            optimizer=optimizer, scheduler=scheduler,
-            epoch=epoch, args=args)
+            model=model,
+            train_dataloader=train_dataloader,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            epoch=epoch,
+            args=args,
+        )
         train_losses.append(train_loss)
         # ========== validate ========== #
         validate_loss = validate_epoch(
-            model=model, validate_dataloader=validate_dataloader,
-            epoch=epoch, args=args)
+            model=model, validate_dataloader=validate_dataloader, epoch=epoch, args=args
+        )
         validate_losses.append(validate_loss)
-        if validate_loss < best_val_loss: # 保存当前困惑度最低的模型
+        if validate_loss < best_val_loss:  # 保存当前困惑度最低的模型
             best_val_loss = validate_loss
-            logger.info('saving current best model for epoch {}'.format(epoch + 1))
-            model_path = join(args.save_model_path, 'min_ppl_model'.format(epoch + 1))
+            logger.info("saving current best model for epoch {}".format(epoch + 1))
+            model_path = join(args.save_model_path, "min_ppl_model".format(epoch + 1))
             if not os.path.exists(model_path):
                 os.mkdir(model_path)
-            model_to_save = model.module if hasattr(model, 'module') else model
+            model_to_save = model.module if hasattr(model, "module") else model
             model_to_save.save_pretrained(model_path)
             tokenizer.save_pretrained(model_path)
 
@@ -248,7 +280,7 @@ def train(tokenizer, model, train_dataset, validate_dataset, args):
         if early_stopping.early_stop:
             logger.info("Early stopping")
             break
-    logger.info('training finished')
+    logger.info("training finished")
     logger.info("train_losses:{}".format(train_losses))
     logger.info("validate_losses:{}".format(validate_losses))
 
@@ -290,29 +322,54 @@ def calculate_acc(logit, labels, ignore_index=-100):
 
 def set_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--device', default='0', type=str, help='设置使用哪些显卡')
-    parser.add_argument('--no_cuda', action='store_true', help='不使用GPU进行训练')
-    parser.add_argument('--model_config', default='config/config.json', type=str, help='设置模型参数')
-    parser.add_argument('--train_path', default='data/train.pkl', type=str, help='训练集路径')
-    parser.add_argument('--max_len', default=150, type=int, help='训练时，输入数据的最大长度')
-    parser.add_argument('--log_path', default='data/train.log', type=str, help='训练日志存放位置')
-    parser.add_argument('--log', default=True, help="是否记录日志")
-    parser.add_argument('--ignore_index', default=-100, type=int, help='对于ignore_index的label token不计算梯度')
-    parser.add_argument('--epochs', default=100, type=int, help='训练的最大轮次')
-    parser.add_argument('--batch_size', default=16, type=int, help='训练的batch size')
-    parser.add_argument('--gpu0_bsz', default=10, type=int, help='0号卡的batch size')
-    parser.add_argument('--lr', default=2.6e-5, type=float, help='学习率')
-    parser.add_argument('--eps', default=1.0e-09, type=float, help='衰减率')
-    parser.add_argument('--log_step', default=10, type=int, help='多少步汇报一次loss')
-    parser.add_argument('--gradient_accumulation_steps', default=4, type=int, help='梯度积累')
-    parser.add_argument('--max_grad_norm', default=2.0, type=float)
-    parser.add_argument('--save_model_path', default='./outputs/', type=str, help='模型输出路径')
-    parser.add_argument('--pretrained_model', default='uer/gpt2-distil-chinese-cluecorpussmall', type=str,
-                        help='预训练的模型的路径')
-    parser.add_argument('--num_workers', type=int, default=0, help="dataloader加载数据时使用的线程数量")
-    parser.add_argument('--patience', type=int, default=0, help="用于early stopping,设为0时,不进行early stopping")
-    parser.add_argument('--warmup_steps_rate', type=float, default=0.05, help='warm up步数')
-    parser.add_argument('--val_rate', type=float, default=0.1, help='验证集大小')
+    parser.add_argument("--device", default="0", type=str, help="设置使用哪些显卡")
+    parser.add_argument("--no_cuda", action="store_true", help="不使用GPU进行训练")
+    parser.add_argument(
+        "--model_config", default="config/config.json", type=str, help="设置模型参数"
+    )
+    parser.add_argument(
+        "--train_path", default="data/train.pkl", type=str, help="训练集路径"
+    )
+    parser.add_argument("--max_len", default=150, type=int, help="训练时，输入数据的最大长度")
+    parser.add_argument(
+        "--log_path", default="data/train.log", type=str, help="训练日志存放位置"
+    )
+    parser.add_argument("--log", default=True, help="是否记录日志")
+    parser.add_argument(
+        "--ignore_index", default=-100, type=int, help="对于ignore_index的label token不计算梯度"
+    )
+    parser.add_argument("--epochs", default=100, type=int, help="训练的最大轮次")
+    parser.add_argument("--batch_size", default=16, type=int, help="训练的batch size")
+    parser.add_argument("--gpu0_bsz", default=10, type=int, help="0号卡的batch size")
+    parser.add_argument("--lr", default=2.6e-5, type=float, help="学习率")
+    parser.add_argument("--eps", default=1.0e-09, type=float, help="衰减率")
+    parser.add_argument("--log_step", default=10, type=int, help="多少步汇报一次loss")
+    parser.add_argument(
+        "--gradient_accumulation_steps", default=4, type=int, help="梯度积累"
+    )
+    parser.add_argument("--max_grad_norm", default=2.0, type=float)
+    parser.add_argument(
+        "--save_model_path", default="./outputs/", type=str, help="模型输出路径"
+    )
+    parser.add_argument(
+        "--pretrained_model",
+        default="uer/gpt2-distil-chinese-cluecorpussmall",
+        type=str,
+        help="预训练的模型的路径",
+    )
+    parser.add_argument(
+        "--num_workers", type=int, default=0, help="dataloader加载数据时使用的线程数量"
+    )
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=0,
+        help="用于early stopping,设为0时,不进行early stopping",
+    )
+    parser.add_argument(
+        "--warmup_steps_rate", type=float, default=0.05, help="warm up步数"
+    )
+    parser.add_argument("--val_rate", type=float, default=0.1, help="验证集大小")
     args = parser.parse_args()
     return args
 
@@ -326,9 +383,9 @@ def main():
 
     # 当用户使用GPU,并且GPU可用时
     args.cuda = torch.cuda.is_available() and not args.no_cuda
-    device = 'cuda' if args.cuda else 'cpu'
+    device = "cuda" if args.cuda else "cpu"
     args.device = device
-    logger.info('using device:{}'.format(device))
+    logger.info("using device:{}".format(device))
 
     # 初始化tokenizer
     tokenizer = BertTokenizerFast.from_pretrained(args.pretrained_model)
@@ -347,7 +404,7 @@ def main():
         model_config = GPT2Config.from_json_file(args.model_config)
         model = GPT2LMHeadModel(config=model_config)
     model = model.to(device)
-    logger.info('model config:\n{}'.format(model.config.to_json_string()))
+    logger.info("model config:\n{}".format(model.config.to_json_string()))
     assert model.config.vocab_size == tokenizer.vocab_size
 
     # 并行训练模型
@@ -360,7 +417,7 @@ def main():
     parameters = model.parameters()
     for parameter in parameters:
         num_parameters += parameter.numel()
-    logger.info('number of model parameters: {}'.format(num_parameters))
+    logger.info("number of model parameters: {}".format(num_parameters))
 
     # 记录参数设置
     logger.info("args:{}".format(args))
@@ -371,5 +428,5 @@ def main():
     train(tokenizer, model, train_dataset, validate_dataset, args)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
