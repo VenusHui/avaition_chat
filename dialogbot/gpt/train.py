@@ -443,11 +443,9 @@ def main():
     # 创建模型
     if args.pretrained_model:  # 加载预训练模型
         # model = GPT2LMHeadModel.from_pretrained(args.pretrained_model)
-        # zqr
         model = GPT2WithDropout.from_pretrained(args.pretrained_model)
     else:  # 初始化模型
         model_config = GPT2Config.from_json_file(args.model_config)
-        # zqr
         # model = GPT2LMHeadModel(config=model_config)
         model = GPT2WithDropout(config=model_config)
     model = model.to(device)
