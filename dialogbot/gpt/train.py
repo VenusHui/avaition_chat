@@ -26,9 +26,51 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import BertTokenizerFast, GPT2LMHeadModel, GPT2Config
 import random
 
+import torch.nn as nn
 
 sys.path.append("../..")
 from dialogbot.gpt.earlystop import EarlyStopping
+
+
+class GPT2WithDropout(GPT2LMHeadModel):
+    def __init__(self, config):
+        super().__init__(config)
+        # self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.dropout = nn.Dropout(0.2)  # 例如，将dropout概率设置为0.2
+
+    def forward(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        token_type_ids=None,
+        position_ids=None,
+        head_mask=None,
+        inputs_embeds=None,
+        labels=None,
+    ):
+        outputs = super().forward(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
+            labels=labels,
+        )
+
+        if labels is not None:
+            loss = outputs.loss
+            logits = outputs.logits
+            loss = self.dropout(loss)
+            logits = self.dropout(logits)
+            return transformers.modeling_outputs.SequenceClassifierOutput(
+                loss=loss,
+                logits=logits,
+                hidden_states=outputs.hidden_states,
+                attentions=outputs.attentions,
+            )
+
+        return outputs
 
 
 class MyDataset(Dataset):
@@ -305,6 +347,7 @@ def caculate_loss(logit, target, pad_idx, smoothing=True):
         logit = logit[..., :-1, :].contiguous().view(-1, logit.size(-1))
         labels = target[..., 1:].contiguous().view(-1)
         loss = F.cross_entropy(logit, labels, ignore_index=pad_idx)
+        # loss = nn.CrossEntropyLoss(ignore_index=pad_idx)(logit, labels)
     return loss
 
 
@@ -399,10 +442,14 @@ def main():
 
     # 创建模型
     if args.pretrained_model:  # 加载预训练模型
-        model = GPT2LMHeadModel.from_pretrained(args.pretrained_model)
+        # model = GPT2LMHeadModel.from_pretrained(args.pretrained_model)
+        # zqr
+        model = GPT2WithDropout.from_pretrained(args.pretrained_model)
     else:  # 初始化模型
         model_config = GPT2Config.from_json_file(args.model_config)
-        model = GPT2LMHeadModel(config=model_config)
+        # zqr
+        # model = GPT2LMHeadModel(config=model_config)
+        model = GPT2WithDropout(config=model_config)
     model = model.to(device)
     logger.info("model config:\n{}".format(model.config.to_json_string()))
     assert model.config.vocab_size == tokenizer.vocab_size
