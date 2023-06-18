@@ -8,13 +8,21 @@ Modified on: https://github.com/yangjianxin1/GPT2-chitchat
 import argparse
 import os
 
+import jieba
+import pandas as pd
+
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 import torch
 import torch.nn.functional as F
 from transformers import BertTokenizerFast, GPT2LMHeadModel
+import jieba.posseg as pseg
 
 PAD = '[PAD]'
 pad_id = 0
+
+basic_data = pd.read_csv("data\\basic_info.csv", encoding="ANSI")
+service_data = pd.read_csv("data\service_info.csv", encoding="ANSI")
+jieba.setLogLevel(20)  # 设置日志级别为 ERROR
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -59,7 +67,7 @@ class Inference:
         input_ids = torch.tensor(input_ids).long().to(self.device)
         input_ids = input_ids.unsqueeze(0)
         response = []  # 根据context，生成的response
-        for _ in range(self.max_len): # 最多生成max_len个token
+        for _ in range(self.max_len):  # 最多生成max_len个token
             outputs = self.model(input_ids=input_ids)
             logits = outputs.logits
             next_token_logits = logits[0, -1, :]
@@ -113,6 +121,7 @@ def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float('Inf')
         logits[indices_to_remove] = filter_value
     return logits
 
+
 def set_args():
     """
     Sets up the arguments.
@@ -131,6 +140,36 @@ def set_args():
     return parser.parse_args()
 
 
+def situation_process(words):
+    answer = []
+    # 特判问候语
+    result = preprocess(words)
+    if len(result) == 1 and result[0] in ['hi', 'Hi', 'Hello', 'hello', '你好', '您好']:
+        answer.append("有什么我可以帮助您的吗")
+        return answer
+
+    for index, row in basic_data.iterrows():
+        if row['type'] in words:
+            answer.append("此次航班的" + row['answerType'] + "为" + row['answer'])
+
+    for index, row in service_data.iterrows():
+        if row['type'] in words:
+            answer.append("此次航班提供的" + row['answerType'] + "有:\n" + row['answer'])
+
+    return answer
+
+
+def preprocess(text):
+    stopwords = [line.strip() for line in
+                 open('data\stopwords_2.txt', 'r', encoding='utf-8').readlines()]
+    seg_list = pseg.cut(text)
+    result = []
+    for word, flag in seg_list:
+        if word not in stopwords and word != '\n' and word != '\u3000' and word != " ":
+            result.append(word)
+    return result
+
+
 def interact():
     args = set_args()
     inference = Inference(args.model_dir, device, args.max_history_len, args.max_len, args.repetition_penalty,
@@ -142,9 +181,19 @@ def interact():
             query = input("乘客:")
             if query.strip() == 'q':
                 raise ValueError("exit")
-            # query = "你好"
+            # 场景层
+            answer = situation_process(query)
+
+            # 模型层 为了保持模型的连贯性，即使已经回答了仍会进行预测，但不会显示预测结果
             text = inference.predict(query)
-            print("空乘AI:" + text)
+
+            if len(answer):
+                print("空乘AI: 您好!")
+                for text in answer:
+                    print(text)
+            else:
+                print("空乘AI:" + text)
+
         except ValueError:
             break
 
